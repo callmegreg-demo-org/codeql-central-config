@@ -99,12 +99,12 @@ workflow already does this.
 1. **Create a GitHub App** owned by `callmegreg-demo-org`, least privilege:
    - **Repository permissions → Contents: Read-only** — the *only* permission needed (Metadata: Read is implicit).
    - **Webhook:** disabled. Name/homepage URL are arbitrary.
-   - *(This demo's app is **CodeQL Config Reader (cmg-demo)**, App ID `4730687`.)*
+   - *(This demo's app is **CodeQL Config Reader (cmg-demo)**, Client ID `Iv23liqGU38HnNgNpGSi`.)*
 2. **Install the app on only `codeql-central-config`** (Install → *Only select repositories* → `codeql-central-config`). It never needs access to any caller repo.
-3. **Generate a private key** (App settings → *Private keys* → *Generate a private key* → downloads a `.pem`).
+3. **Generate a private key** (App settings → *Private keys* → *Generate a private key* → downloads a `.pem`). Note the app's **Client ID** (shown on the app's *General* page, format `Iv23…`).
 4. **Store two organization Actions secrets**, visibility *Private repositories* (or *Selected* → the callers):
    ```bash
-   gh secret set CODEQL_CONFIG_APP_ID          --org callmegreg-demo-org --visibility private --body '<APP_ID>'
+   gh secret set CODEQL_CONFIG_APP_CLIENT_ID   --org callmegreg-demo-org --visibility private --body '<CLIENT_ID>'
    gh secret set CODEQL_CONFIG_APP_PRIVATE_KEY --org callmegreg-demo-org --visibility private < app-private-key.pem
    ```
    Org secrets mean **every** private caller inherits them — nothing to configure per repo.
@@ -116,7 +116,7 @@ The reusable workflow then mints and uses the token (already wired up):
   id: config-token
   uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
   with:
-    app-id: ${{ secrets.CODEQL_CONFIG_APP_ID }}
+    client-id: ${{ secrets.CODEQL_CONFIG_APP_CLIENT_ID }}
     private-key: ${{ secrets.CODEQL_CONFIG_APP_PRIVATE_KEY }}
     owner: callmegreg-demo-org
     repositories: codeql-central-config
