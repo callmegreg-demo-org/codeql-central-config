@@ -1,0 +1,36 @@
+# =============================================================================
+# Central CodeQL configuration
+# Maintained in: callmegreg-demo-org/codeql-central-config
+#
+# This ONE file is consumed by every caller repository through the reusable
+# workflow (.github/workflows/codeql-reusable.yml), which references it with:
+#
+#   config-file: remote=callmegreg-demo-org/codeql-central-config@main:codeql/codeql-config.yml
+#
+# Edit this file on `main` and every caller picks up the change on its next run.
+# No changes are needed in the caller repositories.
+# =============================================================================
+name: "Central CodeQL config (callmegreg-demo-org)"
+
+# Run the standard queries PLUS the security-extended suite for every caller.
+# Swap for `security-and-quality` to also include maintainability/reliability queries.
+queries:
+  - uses: security-extended
+
+# Org-wide path exclusions applied to every caller repository.
+# (paths / paths-ignore apply to interpreted languages such as JavaScript & Python.)
+paths-ignore:
+  - '**/node_modules/**'
+  - '**/vendor/**'
+  - '**/*.test.js'
+  - '**/*.spec.js'
+  - '**/test/**'
+  - '**/tests/**'
+
+# Example org-wide query filter. Uncomment to, e.g., drop experimental queries
+# for everyone from one place:
+#
+# query-filters:
+#   - exclude:
+#       tags contain:
+#         - experimental

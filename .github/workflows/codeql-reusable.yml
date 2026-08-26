@@ -1,0 +1,62 @@
+# =============================================================================
+# Reusable CodeQL workflow  (callmegreg-demo-org/codeql-central-config)
+#
+# Caller repositories invoke this with a ~12-line workflow. The CodeQL config is
+# pulled from THIS repo's codeql/codeql-config.yml, so security policy is owned
+# centrally and every caller stays in sync automatically.
+# =============================================================================
+name: Reusable CodeQL
+
+on:
+  workflow_call:
+    inputs:
+      language:
+        description: 'A single CodeQL language (e.g. javascript-typescript, python, java-kotlin, go, csharp, ruby, swift, actions).'
+        required: false
+        default: 'javascript-typescript'
+        type: string
+      runner:
+        description: 'Runner label to execute on.'
+        required: false
+        default: 'ubuntu-latest'
+        type: string
+    secrets:
+      # Fine-grained PAT with "Contents: Read" on THIS repo (codeql-central-config),
+      # OR a classic PAT with `repo` scope. Only required while this repo is
+      # private/internal, because the caller's default GITHUB_TOKEN cannot read
+      # another private repository. Pass it from callers via `secrets: inherit`.
+      CODEQL_CONFIG_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ inputs.language }})
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ inputs.language }}
+          # ---------------------------------------------------------------------
+          # THE KEY LINE: load the single, centrally-maintained config file.
+          # `remote=OWNER/REPO@REF:FILEPATH` reads it straight from this repo.
+          # ---------------------------------------------------------------------
+          config-file: remote=callmegreg-demo-org/codeql-central-config@main:codeql/codeql-config.yml
+          # Token used ONLY to fetch the config file above from this private repo.
+          external-repository-token: ${{ secrets.CODEQL_CONFIG_TOKEN }}
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ inputs.language }}"
