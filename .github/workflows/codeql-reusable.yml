@@ -21,11 +21,14 @@ on:
         default: 'ubuntu-latest'
         type: string
     secrets:
-      # Fine-grained PAT with "Contents: Read" on THIS repo (codeql-central-config),
-      # OR a classic PAT with `repo` scope. Only required while this repo is
-      # private/internal, because the caller's default GITHUB_TOKEN cannot read
-      # another private repository. Pass it from callers via `secrets: inherit`.
-      CODEQL_CONFIG_TOKEN:
+      # GitHub App credentials for an app that has "Contents: Read" on THIS repo
+      # (codeql-central-config) only. The workflow mints a short-lived installation
+      # token at runtime to fetch the central config file — no PAT to rotate.
+      # Passed from callers via `secrets: inherit`. Only needed while this repo is
+      # private/internal.
+      CODEQL_CONFIG_APP_ID:
+        required: false
+      CODEQL_CONFIG_APP_PRIVATE_KEY:
         required: false
 
 permissions:
@@ -41,6 +44,17 @@ jobs:
       - name: Checkout caller repository
         uses: actions/checkout@v4
 
+      # Mint a short-lived (~1h) installation token scoped to ONLY the central
+      # config repo, from the GitHub App credentials. Nothing long-lived to leak.
+      - name: Get token to read the central config
+        id: config-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.CODEQL_CONFIG_APP_ID }}
+          private-key: ${{ secrets.CODEQL_CONFIG_APP_PRIVATE_KEY }}
+          owner: callmegreg-demo-org
+          repositories: codeql-central-config
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
@@ -50,8 +64,8 @@ jobs:
           # `remote=OWNER/REPO@REF:FILEPATH` reads it straight from this repo.
           # ---------------------------------------------------------------------
           config-file: remote=callmegreg-demo-org/codeql-central-config@main:codeql/codeql-config.yml
-          # Token used ONLY to fetch the config file above from this private repo.
-          external-repository-token: ${{ secrets.CODEQL_CONFIG_TOKEN }}
+          # Short-lived app installation token, ONLY used to fetch the config above.
+          external-repository-token: ${{ steps.config-token.outputs.token }}
 
       - name: Autobuild
         uses: github/codeql-action/autobuild@v3

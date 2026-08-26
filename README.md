@@ -32,7 +32,7 @@ The reusable workflow loads the config with CodeQL's **external-repository** syn
   with:
     languages: ${{ inputs.language }}
     config-file: remote=callmegreg-demo-org/codeql-central-config@main:codeql/codeql-config.yml
-    external-repository-token: ${{ secrets.CODEQL_CONFIG_TOKEN }}
+    external-repository-token: ${{ steps.config-token.outputs.token }}  # short-lived GitHub App token
 ```
 
 `remote=OWNER/REPO@REF:FILEPATH` tells CodeQL to fetch the config file from another repository instead of the one being scanned. That single indirection is what makes the config **central**.
@@ -66,7 +66,7 @@ jobs:
     uses: callmegreg-demo-org/codeql-central-config/.github/workflows/codeql-reusable.yml@main
     with:
       language: javascript-typescript   # or python, java-kotlin, go, csharp, ruby, swift, actions
-    secrets: inherit                    # passes CODEQL_CONFIG_TOKEN through (see below)
+    secrets: inherit                    # passes the app secrets through (see step 2 below)
 ```
 
 A working example lives in **[`callmegreg-demo-org/codeql-caller-demo`](https://github.com/callmegreg-demo-org/codeql-caller-demo)**.
@@ -88,24 +88,47 @@ By default a private repo's workflows can't be reused by other repos. Enable sha
     -f access_level=organization
   ```
 
-### 2. Provide a token so callers can read this private config file
+### 2. Give callers read access to this private config via a GitHub App
 
-A caller's built-in `GITHUB_TOKEN` is scoped to the **caller** repo only, so it cannot read the config file that lives here. Supply a read-only token via `external-repository-token`:
+A caller's built-in `GITHUB_TOKEN` is scoped to the **caller** repo only, so it cannot read the config
+file that lives here. Rather than a long-lived PAT, this setup uses a **GitHub App** and mints a
+**short-lived installation token** at runtime with
+[`actions/create-github-app-token`](https://github.com/actions/create-github-app-token) — the reusable
+workflow already does this.
 
-1. Create a **fine-grained PAT** (recommended):
-   - **Resource owner:** `callmegreg-demo-org`
-   - **Repository access:** only `codeql-central-config`
-   - **Permissions:** **Contents → Read-only**
-   - *(A classic PAT with the `repo` scope also works but is broader.)*
-2. Store it as an **organization Actions secret** named `CODEQL_CONFIG_TOKEN`, and scope its visibility to the caller repos (or “All repositories”):
+1. **Create a GitHub App** owned by `callmegreg-demo-org`, least privilege:
+   - **Repository permissions → Contents: Read-only** — the *only* permission needed (Metadata: Read is implicit).
+   - **Webhook:** disabled. Name/homepage URL are arbitrary.
+   - *(This demo's app is **CodeQL Config Reader (cmg-demo)**, App ID `4730687`.)*
+2. **Install the app on only `codeql-central-config`** (Install → *Only select repositories* → `codeql-central-config`). It never needs access to any caller repo.
+3. **Generate a private key** (App settings → *Private keys* → *Generate a private key* → downloads a `.pem`).
+4. **Store two organization Actions secrets**, visibility *Private repositories* (or *Selected* → the callers):
    ```bash
-   gh secret set CODEQL_CONFIG_TOKEN --org callmegreg-demo-org --visibility all --body '<PAT>'
-   # or scope to selected repos:
-   # gh secret set CODEQL_CONFIG_TOKEN --org callmegreg-demo-org --repos codeql-caller-demo --body '<PAT>'
+   gh secret set CODEQL_CONFIG_APP_ID          --org callmegreg-demo-org --visibility private --body '<APP_ID>'
+   gh secret set CODEQL_CONFIG_APP_PRIVATE_KEY --org callmegreg-demo-org --visibility private < app-private-key.pem
    ```
-   An org secret means **every** caller inherits it — nothing to configure per repo. (You can also set it as a repo secret on a single caller with `gh secret set CODEQL_CONFIG_TOKEN --repo callmegreg-demo-org/codeql-caller-demo`.)
+   Org secrets mean **every** private caller inherits them — nothing to configure per repo.
 
-> The reusable workflow declares this secret as **optional**, so public/internal setups that don't need it still work.
+The reusable workflow then mints and uses the token (already wired up):
+
+```yaml
+- name: Get token to read the central config
+  id: config-token
+  uses: actions/create-github-app-token@v1
+  with:
+    app-id: ${{ secrets.CODEQL_CONFIG_APP_ID }}
+    private-key: ${{ secrets.CODEQL_CONFIG_APP_PRIVATE_KEY }}
+    owner: callmegreg-demo-org
+    repositories: codeql-central-config
+- uses: github/codeql-action/init@v3
+  with:
+    config-file: remote=callmegreg-demo-org/codeql-central-config@main:codeql/codeql-config.yml
+    external-repository-token: ${{ steps.config-token.outputs.token }}
+```
+
+> **Why an App instead of a PAT?** The token is **short-lived (~1h)**, **scoped to a single repo**, tied
+> to no individual person, and the key can be rotated centrally. The secrets are declared **optional**,
+> so public/internal setups that don't need them still work.
 
 ### 3. Enable Code Security (GHAS) on each caller
 
@@ -145,7 +168,7 @@ workflow; it is never scanned.)*
 
 The user asked for the repos to be **as private as possible**. Private works end-to-end with the config above. Here's what changes by visibility, so you can relax it if desired:
 
-| Repo visibility | Reusable workflow sharing | `CODEQL_CONFIG_TOKEN` needed? | Code Security (GHAS) needed? |
+| Repo visibility | Reusable workflow sharing | App token needed? | Code Security (GHAS) needed? |
 | --- | --- | --- | --- |
 | **Public** | Automatic | ❌ No (public config is world-readable) | ❌ No (code scanning is free) |
 | **Internal** | Automatic across the enterprise | ✅ Yes (advanced setup can't read internal config without a token) | ✅ Yes |
@@ -198,7 +221,7 @@ Edit [`codeql/codeql-config.yml`](codeql/codeql-config.yml) on `main`. Every cal
 
 | Symptom | Fix |
 | --- | --- |
-| `Resource not accessible by integration` / config file 404 in *Initialize CodeQL* | `CODEQL_CONFIG_TOKEN` missing or lacks **Contents: Read** on this repo (step 2). Confirm callers use `secrets: inherit`. |
+| `Resource not accessible by integration` / config file 404 in *Initialize CodeQL* | App secrets missing, the app isn't installed on `codeql-central-config`, or it lacks **Contents: Read** (step 2). Confirm callers use `secrets: inherit`. |
 | `error parsing called workflow … not found` | Reusable-workflow access not granted (step 1), or the `uses:` path/ref is wrong. |
 | `Advanced Security must be enabled for this repository` | Enable GHAS on the **caller** (step 3). |
 | Alerts don't appear | Ensure the caller job has `security-events: write` and the run finished the *Perform CodeQL Analysis* step. |
