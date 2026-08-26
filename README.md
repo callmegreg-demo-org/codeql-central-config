@@ -214,7 +214,7 @@ No `external-repository-token` required, because nothing is fetched cross-repo. 
   id: policy
   env:
     GH_TOKEN: ${{ github.token }}          # built-in token; repo-read is enough
-    PROP: ${{ inputs.criticality_property }} # e.g. Application_Business_Criticality
+    PROP: Application_Business_Criticality # org-wide property name (hardcoded, not an input)
   run: |
     set -euo pipefail
     value="$(gh api "/repos/${GITHUB_REPOSITORY}/properties/values" \
@@ -242,8 +242,10 @@ Later steps then consume those outputs — pick the config file, and gate the sc
 ```
 
 This repo ships a **working implementation** of exactly this in
-[`.github/workflows/codeql-reusable.yml`](.github/workflows/codeql-reusable.yml), driven by the
-`criticality_property` input (default `Application_Business_Criticality`) with two configs —
+[`.github/workflows/codeql-reusable.yml`](.github/workflows/codeql-reusable.yml). The property name
+(`Application_Business_Criticality`) is **hardcoded** in the policy step's `PROP` constant — in a
+centralized model it's a fixed org-wide schema constant, so callers supply only its *value*, never
+the name (no workflow input needed). It selects between two configs —
 [`codeql/codeql-config.yml`](codeql/codeql-config.yml) (default) and
 [`codeql/codeql-config-strict.yml`](codeql/codeql-config-strict.yml) (`security-and-quality`).
 
@@ -262,7 +264,7 @@ gh api -X PATCH /repos/OWNER/CALLER-REPO/properties/values \
 ```
 
 **Notes & caveats:**
-- Point `criticality_property` at whatever governance property your org already defines — nothing here is CodeQL-specific. The same pattern works for a boolean opt-in (`code-scanning`), a team/owner tag, environment, etc.
+- Retarget the policy by editing the `PROP` constant in the workflow's policy step — point it at whatever governance property your org already defines. Nothing here is CodeQL-specific; the same pattern works for a boolean opt-in (`code-scanning`), a team/owner tag, environment, etc. *(If you genuinely need per-caller property names — e.g. sharing this workflow across orgs with different schemas — promote `PROP` back to a `workflow_call` input. That's rarely wanted in a single-org centralized model.)*
 - The `config-file` still reads from `@main`, so the chosen config file (e.g. the strict one) must exist on `main`. If you add a new profile, land it on `main` before pointing callers at it.
 - `gh` is preinstalled on GitHub-hosted runners; on self-hosted runners install the [GitHub CLI](https://github.com/cli/cli) or swap the step for a `curl` + `jq` call to the same endpoint.
 - A single scan **job** that self-skips still reports success (green) — desirable for required checks. If you'd rather the check not appear at all for opted-out repos, gate at the *caller* with a job-level `if:` instead.

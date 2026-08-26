@@ -20,15 +20,6 @@ on:
         required: false
         default: 'ubuntu-latest'
         type: string
-      criticality_property:
-        description: >-
-          Name of the repository custom property (set on the CALLER repo) used to
-          decide scan depth. Critical/High -> strict config; Low -> skip; anything
-          else (incl. unset) -> default config. Point this at whatever governance
-          property your org already uses.
-        required: false
-        default: 'Application_Business_Criticality'
-        type: string
     secrets:
       # GitHub App credentials for an app that has "Contents: Read" on THIS repo
       # (codeql-central-config) only. The workflow mints a short-lived installation
@@ -67,7 +58,11 @@ jobs:
         id: policy
         env:
           GH_TOKEN: ${{ github.token }}
-          PROP: ${{ inputs.criticality_property }}
+          # Hardcoded on purpose: in a centralized-policy model the property NAME is a
+          # fixed, org-wide schema constant. Callers supply only its VALUE (by setting
+          # the property on their repo), never the name — so no workflow input is needed.
+          # To retarget the policy org-wide, change this one constant.
+          PROP: Application_Business_Criticality
         run: |
           set -euo pipefail
           value="$(gh api "/repos/${GITHUB_REPOSITORY}/properties/values" \
@@ -96,7 +91,7 @@ jobs:
 
       - name: Skip note
         if: steps.policy.outputs.should_scan != 'true'
-        run: echo "::notice::Skipping CodeQL — caller's '${{ inputs.criticality_property }}' custom property opted out (e.g. Low criticality)."
+        run: echo "::notice::Skipping CodeQL — caller's 'Application_Business_Criticality' custom property opted out (e.g. Low criticality)."
 
       - name: Checkout caller repository
         if: steps.policy.outputs.should_scan == 'true'
