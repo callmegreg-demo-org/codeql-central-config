@@ -28,7 +28,7 @@ Change the config once, on `main`, and **every caller repository picks it up on 
 The reusable workflow loads the config with CodeQL's **external-repository** syntax:
 
 ```yaml
-- uses: github/codeql-action/init@v3
+- uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
   with:
     languages: ${{ inputs.language }}
     config-file: remote=callmegreg-demo-org/codeql-central-config@main:codeql/codeql-config.yml
@@ -114,13 +114,13 @@ The reusable workflow then mints and uses the token (already wired up):
 ```yaml
 - name: Get token to read the central config
   id: config-token
-  uses: actions/create-github-app-token@v1
+  uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
   with:
     app-id: ${{ secrets.CODEQL_CONFIG_APP_ID }}
     private-key: ${{ secrets.CODEQL_CONFIG_APP_PRIVATE_KEY }}
     owner: callmegreg-demo-org
     repositories: codeql-central-config
-- uses: github/codeql-action/init@v3
+- uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
   with:
     config-file: remote=callmegreg-demo-org/codeql-central-config@main:codeql/codeql-config.yml
     external-repository-token: ${{ steps.config-token.outputs.token }}
@@ -188,7 +188,7 @@ removes the Code Security requirement), or use the no-token / self-contained opt
 If you don't want to manage a PAT, keep the config central by embedding it in the reusable workflow with the `config:` input instead of `config-file:`. The config still lives in this repo (in the reusable workflow), so it's still maintained in one place — you just lose the separate `.yml` file:
 
 ```yaml
-- uses: github/codeql-action/init@v3
+- uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
   with:
     languages: ${{ inputs.language }}
     config: |
