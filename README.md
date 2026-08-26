@@ -107,18 +107,37 @@ A caller's built-in `GITHUB_TOKEN` is scoped to the **caller** repo only, so it 
 
 > The reusable workflow declares this secret as **optional**, so public/internal setups that don't need it still work.
 
-### 3. Enable GitHub Advanced Security on each caller
+### 3. Enable Code Security (GHAS) on each caller
 
-Code scanning on a **private** repo requires GitHub Advanced Security (GHAS). Turn it on per caller:
+Code scanning on a **private or internal** repo requires **Code Security** (part of GitHub Advanced
+Security). Public repos skip this entirely.
 
-- **UI:** caller repo → **Settings → Advanced Security** → enable **Code scanning** (Advanced Security).
-- **API:**
-  ```bash
-  gh api -X PATCH /repos/callmegreg-demo-org/codeql-caller-demo \
-    -f 'security_and_analysis[advanced_security][status]=enabled'
-  ```
+In `callmegreg-demo-org`, Code Security is governed by **Security Configurations**, not a per-repo
+toggle (org → **Settings → Advanced Security → Configurations**). Attach a configuration whose
+`advanced_security` includes **Code Security** to the caller repos. Prefer one whose
+`code_scanning_default_setup` is **not_set/disabled** so it doesn't fight this advanced-setup workflow:
 
-*(This repo — `codeql-central-config` — does **not** need GHAS; it only stores config and a workflow, it isn't scanned.)*
+```bash
+# Find a configuration that enables Code Security but NOT default setup:
+gh api /orgs/callmegreg-demo-org/code-security/configurations \
+  --jq '.[] | select(.advanced_security=="enabled" or .advanced_security=="code_security")
+             | {id, name, advanced_security, code_scanning_default_setup}'
+
+# Attach it to the caller (requires org-owner + a token with the admin:org scope):
+REPO_ID=$(gh api /repos/callmegreg-demo-org/codeql-caller-demo --jq .id)
+gh api -X POST /orgs/callmegreg-demo-org/code-security/configurations/<CONFIG_ID>/attach \
+  -f scope=selected -F 'selected_repository_ids[]='"$REPO_ID"
+```
+
+> ⚠️ **This org's current state:** `codeql-caller-demo` is presently covered by an **enterprise-enforced**
+> configuration (`testsully1`) that grants only **Secret Protection** and **disables code scanning**.
+> Enterprise-enforced configurations **cannot be overridden** by an org owner, so private code scanning
+> here is blocked until an **enterprise owner** applies a Code-Security-enabled configuration to (or
+> excludes) these repos. Making the repo **internal does not help** — internal still requires Code
+> Security. Only making the caller **public** removes the requirement.
+
+*(The `codeql-central-config` repo itself does **not** need Code Security — it only stores config and a
+workflow; it is never scanned.)*
 
 ---
 
@@ -126,13 +145,18 @@ Code scanning on a **private** repo requires GitHub Advanced Security (GHAS). Tu
 
 The user asked for the repos to be **as private as possible**. Private works end-to-end with the config above. Here's what changes by visibility, so you can relax it if desired:
 
-| Repo visibility | Reusable workflow sharing | `CODEQL_CONFIG_TOKEN` needed? | GHAS needed? |
+| Repo visibility | Reusable workflow sharing | `CODEQL_CONFIG_TOKEN` needed? | Code Security (GHAS) needed? |
 | --- | --- | --- | --- |
 | **Public** | Automatic | ❌ No (public config is world-readable) | ❌ No (code scanning is free) |
 | **Internal** | Automatic across the enterprise | ✅ Yes (advanced setup can't read internal config without a token) | ✅ Yes |
 | **Private** *(this demo)* | Must enable **Access → organization** (step 1) | ✅ Yes (step 2) | ✅ Yes (step 3) |
 
-**Bottom line:** you do **not** need to make these repos *internal* — **private** works. The only extra cost of private vs. public is the three settings above. If you'd rather avoid the token entirely, either make this repo **public/internal**, or use the no-token option below.
+**Bottom line:** the central pattern works with **private** repos — you do **not** need *internal*
+(internal wouldn't reduce any requirement here). The extra cost of private is the three settings above.
+The one thing outside an org owner's control in this org is **Code Security enablement**, which is
+currently blocked by an enterprise-enforced configuration (see step 3). If you need a green run
+immediately without enterprise involvement, make the **caller** public (only public — not internal —
+removes the Code Security requirement), or use the no-token / self-contained options below.
 
 ---
 
