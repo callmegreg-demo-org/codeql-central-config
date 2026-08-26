@@ -20,6 +20,15 @@ on:
         required: false
         default: 'ubuntu-latest'
         type: string
+      criticality_property:
+        description: >-
+          Name of the repository custom property (set on the CALLER repo) used to
+          decide scan depth. Critical/High -> strict config; Low -> skip; anything
+          else (incl. unset) -> default config. Point this at whatever governance
+          property your org already uses.
+        required: false
+        default: 'Application_Business_Criticality'
+        type: string
     secrets:
       # GitHub App credentials for an app that has "Contents: Read" on THIS repo
       # (codeql-central-config) only. The workflow mints a short-lived installation
@@ -41,13 +50,63 @@ jobs:
     name: Analyze (${{ inputs.language }})
     runs-on: ${{ inputs.runner }}
     steps:
+      # =====================================================================
+      # STEP 0 — Read the CALLER repo's custom properties and derive policy.
+      #
+      # This reusable workflow runs in the CALLER's context, so
+      # `github.repository` is the caller and the built-in GITHUB_TOKEN already
+      # has read access to it. Per the REST docs, "Users with read access to the
+      # repository can use this endpoint," so NO extra secret/app is needed here
+      # (the App token further down is only for reading the central CONFIG repo).
+      #
+      # The caller's custom property VALUES flow in and drive the conditional
+      # logic below: high-criticality repos get the strict config, low ones are
+      # skipped, everything else gets the default config.
+      # =====================================================================
+      - name: Derive scan policy from caller custom properties
+        id: policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROP: ${{ inputs.criticality_property }}
+        run: |
+          set -euo pipefail
+          value="$(gh api "/repos/${GITHUB_REPOSITORY}/properties/values" \
+            --jq "( .[] | select(.property_name==\"${PROP}\") | .value ) // \"\"")"
+          echo "Caller ${GITHUB_REPOSITORY} has ${PROP}='${value:-<unset>}'"
+
+          case "$value" in
+            Critical|High) should_scan=true;  config_path=codeql/codeql-config-strict.yml ;;
+            Low)           should_scan=false; config_path=codeql/codeql-config.yml ;;
+            *)             should_scan=true;  config_path=codeql/codeql-config.yml ;;
+          esac
+
+          echo "Decision -> should_scan=${should_scan}, config=${config_path}"
+          {
+            echo "should_scan=${should_scan}"
+            echo "config_path=${config_path}"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### CodeQL scan policy (from caller custom properties)"
+            echo ""
+            echo "| Property | Caller value | Decision |"
+            echo "| --- | --- | --- |"
+            echo "| \`${PROP}\` | \`${value:-unset}\` | scan=\`${should_scan}\`, config=\`${config_path##*/}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Skip note
+        if: steps.policy.outputs.should_scan != 'true'
+        run: echo "::notice::Skipping CodeQL — caller's '${{ inputs.criticality_property }}' custom property opted out (e.g. Low criticality)."
+
       - name: Checkout caller repository
+        if: steps.policy.outputs.should_scan == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Mint a short-lived (~1h) installation token scoped to ONLY the central
       # config repo, from the GitHub App credentials. Nothing long-lived to leak.
       - name: Get token to read the central config
         id: config-token
+        if: steps.policy.outputs.should_scan == 'true'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ secrets.CODEQL_CONFIG_APP_CLIENT_ID }}
@@ -56,21 +115,25 @@ jobs:
           repositories: codeql-central-config
 
       - name: Initialize CodeQL
+        if: steps.policy.outputs.should_scan == 'true'
         uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           languages: ${{ inputs.language }}
           # ---------------------------------------------------------------------
-          # THE KEY LINE: load the single, centrally-maintained config file.
-          # `remote=OWNER/REPO@REF:FILEPATH` reads it straight from this repo.
+          # THE KEY LINE: load the centrally-maintained config file. Which one is
+          # decided by the caller's custom property (default vs strict), computed
+          # in STEP 0 above — so callers steer policy via metadata, not YAML.
           # ---------------------------------------------------------------------
-          config-file: remote=callmegreg-demo-org/codeql-central-config@main:codeql/codeql-config.yml
+          config-file: remote=callmegreg-demo-org/codeql-central-config@main:${{ steps.policy.outputs.config_path }}
           # Short-lived app installation token, ONLY used to fetch the config above.
           external-repository-token: ${{ steps.config-token.outputs.token }}
 
       - name: Autobuild
+        if: steps.policy.outputs.should_scan == 'true'
         uses: github/codeql-action/autobuild@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
 
       - name: Perform CodeQL Analysis
+        if: steps.policy.outputs.should_scan == 'true'
         uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           category: "/language:${{ inputs.language }}"

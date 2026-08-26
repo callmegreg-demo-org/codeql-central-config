@@ -1,0 +1,28 @@
+# =============================================================================
+# Central CodeQL configuration — STRICT profile
+# Maintained in: callmegreg-demo-org/codeql-central-config
+#
+# This is the "high assurance" variant of codeql-config.yml. The reusable
+# workflow loads THIS file instead of the default one when the CALLER repository
+# is tagged as high-risk via a repository custom property (see the
+# "Derive scan policy from caller custom properties" step in
+# .github/workflows/codeql-reusable.yml).
+#
+# Because both configs live here, the *policy* (which repos get which depth of
+# scanning) is still owned centrally — callers only supply metadata.
+# =============================================================================
+name: "Central CodeQL config — STRICT (callmegreg-demo-org)"
+
+# security-and-quality is a superset of security-extended: it adds
+# maintainability/reliability queries on top of the full security set.
+queries:
+  - uses: security-and-quality
+
+# Same org-wide path exclusions as the default profile.
+paths-ignore:
+  - '**/node_modules/**'
+  - '**/vendor/**'
+  - '**/*.test.js'
+  - '**/*.spec.js'
+  - '**/test/**'
+  - '**/tests/**'
