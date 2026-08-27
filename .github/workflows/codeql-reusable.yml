@@ -58,32 +58,34 @@ jobs:
         id: policy
         env:
           GH_TOKEN: ${{ github.token }}
-          # Hardcoded on purpose: in a centralized-policy model the property NAME is a
-          # fixed, org-wide schema constant. Callers supply only its VALUE (by setting
-          # the property on their repo), never the name — so no workflow input is needed.
-          # To retarget the policy org-wide, change this one constant.
+          # Property NAME is a fixed org-wide constant, so it's hardcoded here
+          # (callers supply only its VALUE). Change this one line to retarget.
           PROP: Application_Business_Criticality
         run: |
           set -euo pipefail
+
+          # 1. READ the caller's value for that property (empty string if unset).
           value="$(gh api "/repos/${GITHUB_REPOSITORY}/properties/values" \
-            --jq "( .[] | select(.property_name==\"${PROP}\") | .value ) // \"\"")"
-          echo "Caller ${GITHUB_REPOSITORY} has ${PROP}='${value:-<unset>}'"
+            --jq '.[] | select(.property_name == env.PROP) | .value')"
+          echo "Caller ${GITHUB_REPOSITORY}: ${PROP}=${value:-<unset>}"
 
+          # 2. MAP the value to a policy: do we scan, and with which config?
           case "$value" in
-            Critical|High) should_scan=true;  config_path=codeql/codeql-config-strict.yml ;;
-            Low)           should_scan=false; config_path=codeql/codeql-config.yml ;;
-            *)             should_scan=true;  config_path=codeql/codeql-config.yml ;;
+            Critical | High) should_scan=true;  config_path=codeql/codeql-config-strict.yml ;;  # deeper
+            Low)             should_scan=false; config_path=codeql/codeql-config.yml ;;         # opt out
+            *)               should_scan=true;  config_path=codeql/codeql-config.yml ;;         # default
           esac
+          echo "Decision: should_scan=${should_scan}, config=${config_path}"
 
-          echo "Decision -> should_scan=${should_scan}, config=${config_path}"
+          # 3. PUBLISH the decision so later steps can read it via steps.policy.outputs.*
           {
             echo "should_scan=${should_scan}"
             echo "config_path=${config_path}"
           } >> "$GITHUB_OUTPUT"
 
+          # (Optional, cosmetic) show the decision in the run's summary panel.
           {
             echo "### CodeQL scan policy (from caller custom properties)"
-            echo ""
             echo "| Property | Caller value | Decision |"
             echo "| --- | --- | --- |"
             echo "| \`${PROP}\` | \`${value:-unset}\` | scan=\`${should_scan}\`, config=\`${config_path##*/}\` |"

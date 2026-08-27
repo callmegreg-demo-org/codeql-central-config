@@ -217,13 +217,19 @@ No `external-repository-token` required, because nothing is fetched cross-repo. 
     PROP: Application_Business_Criticality # org-wide property name (hardcoded, not an input)
   run: |
     set -euo pipefail
+
+    # 1. READ the caller's value for that property (empty if unset).
     value="$(gh api "/repos/${GITHUB_REPOSITORY}/properties/values" \
-      --jq "( .[] | select(.property_name==\"${PROP}\") | .value ) // \"\"")"
+      --jq '.[] | select(.property_name == env.PROP) | .value')"
+
+    # 2. MAP the value to a policy: scan or not, and which config.
     case "$value" in
-      Critical|High) should_scan=true;  config_path=codeql/codeql-config-strict.yml ;;
-      Low)           should_scan=false; config_path=codeql/codeql-config.yml ;;
-      *)             should_scan=true;  config_path=codeql/codeql-config.yml ;;  # incl. unset
+      Critical | High) should_scan=true;  config_path=codeql/codeql-config-strict.yml ;;  # deeper
+      Low)             should_scan=false; config_path=codeql/codeql-config.yml ;;         # opt out
+      *)               should_scan=true;  config_path=codeql/codeql-config.yml ;;         # default
     esac
+
+    # 3. PUBLISH for later steps.
     echo "should_scan=$should_scan" >> "$GITHUB_OUTPUT"
     echo "config_path=$config_path" >> "$GITHUB_OUTPUT"
 ```
