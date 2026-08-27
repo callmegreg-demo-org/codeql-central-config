@@ -203,6 +203,80 @@ No `external-repository-token` required, because nothing is fetched cross-repo. 
 
 ---
 
+## Advanced: branch on the caller's repository custom properties
+
+**Yes — a reusable workflow can read the _calling_ repo's [custom property](https://docs.github.com/en/organizations/managing-organization-settings/managing-custom-properties-for-repositories-in-your-organization) values and use them to steer its own logic.** This lets you centralize *policy* ("Critical apps get a deeper scan, low-risk repos can opt out") while callers only supply *metadata* — no per-repo YAML.
+
+**How it works:** the reusable workflow runs in the **caller's** context, so `github.repository` is the caller. Repo custom property values are readable by anyone with **read access to the repo**, which the built-in `GITHUB_TOKEN` already has — so this needs **no extra secret or App** (that App is only for reading this central *config* repo):
+
+```yaml
+- name: Derive scan policy from caller custom properties
+  id: policy
+  env:
+    GH_TOKEN: ${{ github.token }}          # built-in token; repo-read is enough
+    PROP: Application_Business_Criticality # org-wide property name (hardcoded, not an input)
+  run: |
+    set -euo pipefail
+
+    # 1. READ the caller's value for that property (empty if unset).
+    value="$(gh api "/repos/${GITHUB_REPOSITORY}/properties/values" \
+      --jq '.[] | select(.property_name == env.PROP) | .value')"
+
+    # 2. MAP the value to a policy: scan or not, and which config.
+    case "$value" in
+      Critical | High) should_scan=true;  config_path=codeql/codeql-config-strict.yml ;;  # deeper
+      Low)             should_scan=false; config_path=codeql/codeql-config.yml ;;         # opt out
+      *)               should_scan=true;  config_path=codeql/codeql-config.yml ;;         # default
+    esac
+
+    # 3. PUBLISH for later steps.
+    echo "should_scan=$should_scan" >> "$GITHUB_OUTPUT"
+    echo "config_path=$config_path" >> "$GITHUB_OUTPUT"
+```
+
+Later steps then consume those outputs — pick the config file, and gate the scan:
+
+```yaml
+- name: Initialize CodeQL
+  if: steps.policy.outputs.should_scan == 'true'
+  uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+  with:
+    languages: ${{ inputs.language }}
+    config-file: remote=callmegreg-demo-org/codeql-central-config@main:${{ steps.policy.outputs.config_path }}
+    external-repository-token: ${{ steps.config-token.outputs.token }}
+# ...Autobuild / Analyze also carry `if: steps.policy.outputs.should_scan == 'true'`
+```
+
+This repo ships a **working implementation** of exactly this in
+[`.github/workflows/codeql-reusable.yml`](.github/workflows/codeql-reusable.yml). The property name
+(`Application_Business_Criticality`) is **hardcoded** in the policy step's `PROP` constant — in a
+centralized model it's a fixed org-wide schema constant, so callers supply only its *value*, never
+the name (no workflow input needed). It selects between two configs —
+[`codeql/codeql-config.yml`](codeql/codeql-config.yml) (default) and
+[`codeql/codeql-config-strict.yml`](codeql/codeql-config-strict.yml) (`security-and-quality`).
+
+| Caller's `Application_Business_Criticality` | Result |
+| --- | --- |
+| `Critical` / `High` | Strict config (`security-and-quality`) |
+| `Medium` *(or unset / any other value)* | Default config (`security-extended`) |
+| `Low` | **Scan skipped** — job still succeeds, logs a `::notice::` |
+
+**Set the property** on a caller (org owners, or repo admins if the property is `values_editable_by: org_and_repo_actors`):
+
+```bash
+gh api -X PATCH /repos/OWNER/CALLER-REPO/properties/values \
+  -f 'properties[][property_name]=Application_Business_Criticality' \
+  -f 'properties[][value]=High'
+```
+
+**Notes & caveats:**
+- Retarget the policy by editing the `PROP` constant in the workflow's policy step — point it at whatever governance property your org already defines. Nothing here is CodeQL-specific; the same pattern works for a boolean opt-in (`code-scanning`), a team/owner tag, environment, etc. *(If you genuinely need per-caller property names — e.g. sharing this workflow across orgs with different schemas — promote `PROP` back to a `workflow_call` input. That's rarely wanted in a single-org centralized model.)*
+- The `config-file` still reads from `@main`, so the chosen config file (e.g. the strict one) must exist on `main`. If you add a new profile, land it on `main` before pointing callers at it.
+- `gh` is preinstalled on GitHub-hosted runners; on self-hosted runners install the [GitHub CLI](https://github.com/cli/cli) or swap the step for a `curl` + `jq` call to the same endpoint.
+- A single scan **job** that self-skips still reports success (green) — desirable for required checks. If you'd rather the check not appear at all for opted-out repos, gate at the *caller* with a job-level `if:` instead.
+
+---
+
 ## Verify it's working
 
 1. In a caller repo, open **Actions** → the **CodeQL** run → the **Analyze** job.
@@ -225,3 +299,5 @@ Edit [`codeql/codeql-config.yml`](codeql/codeql-config.yml) on `main`. Every cal
 | `error parsing called workflow … not found` | Reusable-workflow access not granted (step 1), or the `uses:` path/ref is wrong. |
 | `Advanced Security must be enabled for this repository` | Enable GHAS on the **caller** (step 3). |
 | Alerts don't appear | Ensure the caller job has `security-events: write` and the run finished the *Perform CodeQL Analysis* step. |
+| Config 404 only for high-criticality callers (custom-property example) | The selected profile (e.g. `codeql/codeql-config-strict.yml`) must exist on `main` — the `config-file` reads from `@main`. |
+| Custom-property step shows `<unset>` unexpectedly | Property name is case-sensitive and must match the org/enterprise schema exactly; confirm it's assigned to the caller repo. |
